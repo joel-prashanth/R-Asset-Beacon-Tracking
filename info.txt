@@ -1,0 +1,24 @@
+    // Cylindrical Projections
+
+    // Mercator (EPSG:3395) Use Case: Maritime navigation, equatorial regions.
+    // Web Mercator (EPSG:3857) Use Case: Web mapping, global maps.
+    // Transverse Mercator (EPSG:326xx) Use Case: National grids, topographic maps, large-scale maps.
+
+    // Conic Projections
+
+    // Albers Equal-Area Conic (EPSG:9822) Use Case: Thematic and regional maps of mid-latitude areas like the United States.
+    //  Lambert Conformal Conic (EPSG:9801) Use Case: Aeronautical charts, regional maps.
+
+     // Azimuthal Projections
+
+    // Azimuthal Equidistant (EPSG:54032) Use Case: Radio propagation maps, seismic mapping, polar charts.
+    // Stereographic (EPSG:9809) Use Case: Navigation, polar maps, meteorological charts.
+    // Orthographic (EPSG:9802) Use Case: Visualizations, educational purposes.
+
+
+    // Pseudocylindrical Projections
+
+    // Mollweide (EPSG:54009) Use Case: World maps, thematic maps
+    // Robinson (EPSG:54030) Use Case: World maps, atlases.
+    // Goode’s Homolosine (EPSG:54052) Use Case: World maps.
+    // Winkel Tripel (EPSG:54042) Use Case: World maps, general purpose atlases. 

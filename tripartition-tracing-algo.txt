@@ -1,0 +1,383 @@
+import "./style.css";
+import Map from "ol/Map.js";
+import View from "ol/View.js";
+import ImageLayer from "ol/layer/Image.js";
+import { ImageStatic } from "ol/source.js";
+import { get as getProjection, Projection } from "ol/proj";
+import { register } from "ol/proj/proj4";
+import proj4 from "proj4";
+import VectorSource from "ol/source/Vector";
+import VectorLayer from "ol/layer/Vector";
+import Style from "ol/style/Style";
+import Text from "ol/style/Text";
+import Fill from "ol/style/Fill";
+import Stroke from "ol/style/Stroke";
+import Circle from "ol/style/Circle";
+import Feature from "ol/Feature";
+import { Point } from "ol/geom";
+
+const extent = [0, 0, 1024, 968];
+
+// Register a new projection
+proj4.defs("EPSG:32600", "+proj=eqc +datum=WGS84 +units=m +no_defs");
+register(proj4);
+
+const projection = new Projection({
+  code: "EPSG:32600",
+  units: "m",
+  extent: extent,
+});
+
+// Define the image layer with the floormap
+const imageLayer = new ImageLayer({
+  source: new ImageStatic({
+    url: "./assets/floormap.png",
+    projection: projection,
+    imageExtent: extent,
+  }),
+});
+
+// Define a vector source and layer to display the RSSI values
+const vectorSource = new VectorSource();
+const vectorLayer = new VectorLayer({
+  source: vectorSource,
+  style: new Style({
+    fill: new Fill({
+      color: "rgba(0,0,255,0.1)",
+    }),
+  }),
+});
+
+// Create the map
+const map = new Map({
+  layers: [imageLayer, vectorLayer],
+  view: new View({
+    center: [extent[2] / 2, extent[3] / 2],
+    projection: projection,
+    zoom: 2,
+  }),
+  target: "map",
+});
+
+map.getView().fit(extent, map.getSize()); // Fit the view to the extent
+
+// Element to display the beacon count
+const beaconCountElement = document.createElement("div");
+beaconCountElement.id = "beacon-count";
+beaconCountElement.style.position = "absolute";
+beaconCountElement.style.top = "10px";
+beaconCountElement.style.left = "10px";
+beaconCountElement.style.backgroundColor = "rgba(255, 255, 255, 0.8)";
+beaconCountElement.style.padding = "10px";
+beaconCountElement.style.borderRadius = "5px";
+document.body.appendChild(beaconCountElement);
+
+// Create a table to display beacon information
+const beaconTable = document.createElement("table");
+beaconTable.id = "beacon-table";
+beaconTable.style.position = "absolute";
+beaconTable.style.top = "80px";
+beaconTable.style.left = "10px";
+beaconTable.style.backgroundColor = "rgba(255, 255, 255, 0.8)";
+beaconTable.style.padding = "10px";
+beaconTable.style.borderCollapse = "collapse";
+document.body.appendChild(beaconTable);
+
+// Add table headers
+const tableHeader = document.createElement("tr");
+const headerNumber = document.createElement("th");
+headerNumber.innerText = "Beacon Number";
+const headerRSSI = document.createElement("th");
+headerRSSI.innerText = "RSSI Value";
+const headerDistance = document.createElement("th");
+headerDistance.innerText = "Distance (m)";
+const headerTimestamp = document.createElement("th");
+headerTimestamp.innerText = "Timestamp";
+const headerGateway = document.createElement("th");
+headerGateway.innerText = "Gateway";
+tableHeader.appendChild(headerNumber);
+tableHeader.appendChild(headerRSSI);
+tableHeader.appendChild(headerDistance);
+tableHeader.appendChild(headerTimestamp);
+tableHeader.appendChild(headerGateway);
+beaconTable.appendChild(tableHeader);
+
+// Connect to the WebSocket server
+const ws = new WebSocket("ws://localhost:9002");
+
+ws.onopen = function () {
+  console.log("WebSocket connection opened");
+};
+
+ws.onmessage = function (event) {
+  try {
+    const data = JSON.parse(event.data);
+    if (data.topic === "Honda") {
+      const beaconData = data.message;
+      updateRSSI(beaconData); // Update the map with the new RSSI data
+    } else {
+      console.error("Unexpected data format or topic.");
+    }
+  } catch (error) {
+    console.error("Error processing WebSocket message:", error);
+  }
+};
+
+ws.onclose = function () {
+  console.log("WebSocket connection closed");
+};
+
+// Hardcoded mapping of MAC IDs to numbers
+const macToNumberMap = {
+  "BC57290206E8": 1,
+  "BC57290206E0": 2,
+  "BC572901FCAA": 3,
+  "BC57290202C9": 4,
+  "BC57290209A2": 5,
+  "BC572901FDAF": 6,
+  "BC5729009951": 7,
+  "BC572901FC56": 8,
+  "BC572901FBE7": 9,
+  "BC572902056E": 10,
+  "BC572902034B": 11,
+  "BC5729020961": 12,
+
+  // Add more mappings as needed
+};
+
+// Define the number of rows and columns for the matrix grid
+const numRows = 3;
+const numCols = 4;
+
+// Calculate the spacing between beacons
+const xSpacing = extent[2] / (numCols + 1);
+const ySpacing = extent[3] / (numRows + 1);
+
+// Calculate the coordinates for each beacon in the matrix grid
+const beaconCoordinates = {};
+Object.keys(macToNumberMap).forEach((mac, index) => {
+  const row = Math.floor(index / numCols);
+  const col = index % numCols;
+  beaconCoordinates[mac] = [(col + 1) * xSpacing, (row + 1) * ySpacing];
+});
+
+let dataTimeout;
+const detectedBeacons = new Set();
+const lastReceivedTimestamps = {}; // Track the last received timestamp for each beacon
+const rssiValues = {}; // Track the RSSI values for each beacon
+const averageRssiValues = {}; // Track the average RSSI values for each beacon
+
+const RSSI_REF = -28; // Reference RSSI value at 1 meter
+const PATH_LOSS_EXPONENT = 1.3; // Path-loss exponent
+
+// Function to calculate the distance based on RSSI
+function calculateDistance(rssi) {
+  return Math.pow(10, (RSSI_REF - rssi) / (10 * PATH_LOSS_EXPONENT));
+}
+
+// RSSI sample collection
+const rssiSampleCollection = {};
+
+// Function to add RSSI sample
+function addRSSISample(mac, rssi) {
+  if (!rssiSampleCollection[mac]) {
+    rssiSampleCollection[mac] = [];
+  }
+  rssiSampleCollection[mac].push(rssi);
+
+  // Keep only the last 55 samples (approximately 1-minute worth if samples are received every second)
+  if (rssiSampleCollection[mac].length > 55) {
+    rssiSampleCollection[mac].shift();
+  }
+}
+
+// Function to classify RSSI samples
+function classifyRSSISamples(samples) {
+  const classifiedSamples = {
+    DC: [],
+    NC: [],
+    IC: []
+  };
+
+  samples.forEach((rssi) => {
+    if (rssi < -70) { // Adjust classification thresholds as needed
+      classifiedSamples.DC.push(rssi);
+    } else if (rssi > -50) {
+      classifiedSamples.IC.push(rssi);
+    } else {
+      classifiedSamples.NC.push(rssi);
+    }
+  });
+
+  return classifiedSamples;
+}
+
+// Function to calculate mean and variance
+function calculateStats(samples) {
+  const n = samples.length;
+  if (n === 0) return { mean: 0, variance: 0 };
+
+  const mean = samples.reduce((a, b) => a + b, 0) / n;
+  const variance = samples.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n;
+
+  return { mean, variance };
+}
+
+// Function to calculate the average of an array of numbers
+function calculateAverage(samples) {
+  if (samples.length === 0) return 0;
+  const sum = samples.reduce((a, b) => a + b, 0);
+  return sum / samples.length;
+}
+
+// Function to identify outliers using the IQR method
+function identifyOutliers(samples) {
+  if (samples.length === 0) return [];
+
+  samples.sort((a, b) => a - b);
+  const q1 = samples[Math.floor(samples.length * 0.25)];
+  const q3 = samples[Math.floor(samples.length * 0.75)];
+  const iqr = q3 - q1;
+  const lowerBound = q1 - 1.5 * iqr;
+  const upperBound = q3 + 1.5 * iqr;
+
+  return samples.filter((rssi) => rssi < lowerBound || rssi > upperBound);
+}
+
+// Function to calculate skewness
+function calculateSkewness(samples) {
+  if (samples.length === 0) return 0;
+
+  const { mean } = calculateStats(samples);
+  const n = samples.length;
+  const m3 = samples.reduce((acc, x) => acc + Math.pow(x - mean, 3), 0) / n;
+  const m2 = Math.pow(samples.reduce((acc, x) => acc + Math.pow(x - mean, 2), 0) / n, 1.5);
+
+  return m3 / m2;
+}
+
+// Function to process the collected RSSI samples
+function processRSSISamples() {
+  const results = {};
+
+  Object.keys(rssiSampleCollection).forEach((mac) => {
+    const samples = rssiSampleCollection[mac];
+    const classifiedSamples = classifyRSSISamples(samples);
+
+    const averageRSSI = calculateAverage(samples); // Calculate the average RSSI
+
+    results[mac] = {
+      average: averageRSSI, // Store the average RSSI
+      DC: calculateStats(classifiedSamples.DC),
+      NC: calculateStats(classifiedSamples.NC),
+      IC: calculateStats(classifiedSamples.IC)
+    };
+
+    // Identify outliers and skewness
+    results[mac].outliers = identifyOutliers(samples);
+    results[mac].skewness = calculateSkewness(samples);
+    
+    // Store the average RSSI value in the global object
+    averageRssiValues[mac] = averageRSSI;
+  });
+
+  console.log("Processed RSSI samples with averages:", results);
+}
+
+// Set an interval to process RSSI samples every minute
+setInterval(processRSSISamples, 60000);
+
+// Function to update the RSSI values on the map
+function updateRSSI(data) {
+  clearTimeout(dataTimeout);
+
+  const now = Date.now();
+  detectedBeacons.clear(); // Clear the set of detected beacons
+
+  // Update the beacon count and table
+  const beaconCount = data.obj.length;
+  beaconCountElement.innerText = `Beacon Count: ${beaconCount}`;
+  beaconTable.innerHTML = "";
+  beaconTable.appendChild(tableHeader); // Add table headers
+
+  data.obj.forEach((beacon) => {
+    if (beacon.rssi > -80) { // Filter out beacons with weak signals
+      detectedBeacons.add(beacon.dmac); // Add detected beacon to the set
+      lastReceivedTimestamps[beacon.dmac] = now; // Update the last received timestamp
+      rssiValues[beacon.dmac] = beacon.rssi; // Update the RSSI value
+
+      addRSSISample(beacon.dmac, beacon.rssi); // Collect RSSI samples
+
+      // Add a new row to the table with beacon information
+      const row = document.createElement("tr");
+      const cellNumber = document.createElement("td");
+      cellNumber.innerText = macToNumberMap[beacon.dmac] || "N/A";
+      const cellRSSI = document.createElement("td");
+      cellRSSI.innerText = beacon.rssi;
+      const cellDistance = document.createElement("td");
+      cellDistance.innerText = calculateDistance(beacon.rssi).toFixed(2);
+      const cellTimestamp = document.createElement("td");
+      cellTimestamp.innerText = new Date().toLocaleTimeString();
+      const cellGateway = document.createElement("td");
+      cellGateway.innerText = data.gmac;
+      row.appendChild(cellNumber);
+      row.appendChild(cellRSSI);
+      row.appendChild(cellDistance);
+      row.appendChild(cellTimestamp);
+      row.appendChild(cellGateway);
+      beaconTable.appendChild(row);
+    }
+  });
+
+  // Update beacon styles and positions on the map
+  vectorSource.clear();
+  Object.keys(macToNumberMap).forEach((mac) => {
+    const coordinates = beaconCoordinates[mac];
+    const feature = new Feature({
+      geometry: new Point(coordinates),
+      name: macToNumberMap[mac],
+    });
+
+    const isActive = detectedBeacons.has(mac);
+    const averageRssiValue = averageRssiValues[mac] || 0; // Default to 0 if no average RSSI value available
+
+    let fillColor;
+    if (averageRssiValue > -50) {
+      fillColor = "green";
+    } else if (averageRssiValue >= -70) {
+      fillColor = "yellow";
+    } else {
+      fillColor = "red";
+    }
+
+    feature.setStyle(
+      new Style({
+        image: new Circle({
+          radius: 10,
+          fill: new Fill({ color: isActive ? fillColor : "gray" }),
+          stroke: new Stroke({ color: "black", width: 2 }),
+        }),
+        text: new Text({
+          text: isActive ? `${macToNumberMap[mac]}\n(${averageRssiValue.toFixed(0)})` : `${macToNumberMap[mac]}`,
+          font: "12px Calibri,sans-serif",
+          fill: new Fill({ color: "#000" }),
+          stroke: new Stroke({
+            color: "#fff", width: 3
+          }),
+          textAlign: "center",
+          textBaseline: "bottom",
+          offsetY: -18
+        }),
+      })
+    );
+
+    vectorSource.addFeature(feature);
+  });
+
+  dataTimeout = setTimeout(() => {
+    vectorSource.clear();
+    beaconCountElement.innerText = "Beacon Count: 0";
+    beaconTable.innerHTML = "";
+    beaconTable.appendChild(tableHeader);
+  }, 5000); // Clear the map if no data received for 2 seconds
+}

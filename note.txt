@@ -1,0 +1,45 @@
+// import "./style.css";
+// import Map from "ol/Map.js";
+// import View from "ol/View.js";
+// import ImageLayer from "ol/layer/Image";
+// import { ImageStatic } from "ol/source";
+
+// const extent = [0, 0, 1024, 968];
+
+// const imageLayer = new ImageLayer({
+//   source: new ImageStatic({
+//     url: "./assets/floormap.png",
+//     projection: "EPSG: 3857",
+//     imageExtent: extent,
+//   }),
+// });
+
+// //Target the div with map id
+// const map = new Map({
+//   layers: [imageLayer],
+
+//   view: new View({
+//     center: [extent[2] / 2, extent[3] / 2], // center
+//     projection: "EPSG:3857",
+//     zoom: 2,
+//   }),
+//   target: "map",
+// });
+
+// map.getView().fit(extent, map.getSize());
+
+
+//Source from where the map or floorplan is rendered
+// const source = OSM();
+
+// const layer = new TileLayer({source: source})
+// map.addLayer(layer);
+
+//A View also has a projection. The projection determines the coordinate system of the center and the units for map resolution calculations. If not specified (like in the above snippet), the default projection is Spherical Mercator (EPSG:3857), with meters as map units.
+
+// map.setView(new View({
+//   center: [0,0],
+//   zoom: 2, //optional: projection:
+// }));
+
+// A layer is a visual representation of data from a source. OpenLayers has four basic types of layers:
